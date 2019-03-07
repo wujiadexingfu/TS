@@ -1,0 +1,267 @@
+DBCC DROPCLEANBUFFERS;
+DBCC FREEPROCCACHE;
+DBCC FREESYSTEMCACHE ('ALL');
+
+
+当前已缓存的计划数及所占的MB 数
+
+ SELECT COUNT(*) AS 'Number of Plans' ,
+
+SUM(CAST(size_in_bytes AS BIGINT)) / 1024 /1024 AS 'Plan Cache Size (MB)'
+
+FROM sys.dm_exec_cached_plans
+
+
+查看缓存对象的对应内存数
+
+SELECT objtype AS 'Cached Object Type' ,
+
+COUNT(*) AS 'Number of Plans' ,
+
+SUM(CAST(size_in_bytes AS BIGINT)) / 1024 /1024 AS 'Plan Cache Size (MB)' ,
+
+AVG(usecounts) AS 'Avg Use Count'
+
+FROM sys.dm_exec_cached_plans
+
+GROUP BY objtype
+
+--重点查看类型为Adhoc的类型，建议开启针对即席工作负荷进行优化。
+
+
+
+--数据库路径
+SELECT physical_name  
+
+FROM   sys.master_files  
+
+WHERE  database_id = DB_ID('FEMS')
+
+
+
+--检查等待类型中等待时间最长的10个类型
+SELECT TOP(10)
+wait_type,
+waiting_tasks_count,
+(wait_time_ms-signal_wait_time_ms) AS resource_wait_time,
+max_wait_time_ms,
+CASE waiting_tasks_count
+WHEN 0 THEN 0
+ELSE wait_time_ms/waiting_tasks_count
+END AS avg_wait_time
+FROM sys.dm_os_wait_stats
+WHERE wait_type NOT LIKE '%SLEEP%'--去除不相关的等待类型
+AND wait_type NOT LIKE 'XE%'
+AND wait_type NOT IN ('KSOURCE_WAKEUP','BROKER_TASK_STOP','FT_IFTS_SCHEDULER_IDLE_WAIT','SQLTRACE_BUFFER_FLUSH','CLR_AUTO_EVENT','BROKER_EVENTHANDLER','BAD_PAGE_PROCESS','BROKER_TRANSMITTER','CHECKPOINT_QUEUE','DBMIRROR_EVENTS_QUEUE','SQLTRACE_BUFFER_FLUSH','CLR_MANUAL_EVENT','ONDEMAND_TASK_QUEUE','REQUEST_FOR_DEADLOCK_SEARCH','LOGMGR_QUEUE','BROKER_RECEIVE_WAITFOR','PREEMPTIVE_OS_GETORICADDRESS','PREEMPTIVE_OS_AUTHENTICATIONOPS','BROKER_TO_FLUSH')--去除系统类型
+ORDER BY wait_time_ms DESC
+
+
+
+
+select 
+		DB_NAME = DB_NAME(database_id)
+		,SCHEMA_NAME = SCHEMA_NAME(schema_id)
+		,OBJECT_NAME = tb.name
+		,ix.name
+		,avg_fragmentation_in_percent
+from sys.dm_db_index_physical_stats(db_id(),object_id('fem_smart_data','U'),NULL,NULL,'LIMITED') AS fra
+	CROSS APPLY sys.indexes AS ix WITH (NOLOCK)
+	INNER JOIN sys.tables as tb WITH(NOLOCK)
+	ON ix.object_id = tb.object_id
+WHERE ix.object_id = fra.object_id
+	and ix.index_id = fra.index_id
+
+//查詢碎片化
+
+
+SELECT OBJECT_NAME(ind.OBJECT_ID) AS TableName, 
+ind.name AS IndexName, indexstats.index_type_desc AS IndexType, 
+indexstats.avg_fragmentation_in_percent 
+FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, NULL) indexstats 
+INNER JOIN sys.indexes ind  
+ON ind.object_id = indexstats.object_id 
+AND ind.index_id = indexstats.index_id 
+WHERE indexstats.avg_fragmentation_in_percent > 30 
+ORDER BY indexstats.avg_fragmentation_in_percent DESC 
+
+//查询碎片化率在30%的索引
+
+
+
+
+//缺失索引
+SELECT TOP 10
+	database_name = db_name(details.database_id)
+	, schema_name = SCHEMA_NAME(tb.schema_id)
+	, object_name = tb.name
+	, avg_estimated_impact = dm_migs.avg_user_impact*(dm_migs.user_seeks+dm_migs.user_scans)
+	, last_user_seek = dm_migs.last_user_seek
+	, create_index = 
+'CREATE INDEX [IX_' + OBJECT_NAME(details.OBJECT_ID,details.database_id) + '_'
++ REPLACE(REPLACE(REPLACE(ISNULL(details.equality_columns,''),', ','_'),'[',''),']','') 
++ CASE
+	WHEN details.equality_columns IS NOT NULL
+	AND details.inequality_columns IS NOT NULL THEN '_'
+	ELSE ''
+	END
+	+ REPLACE(REPLACE(REPLACE(ISNULL(details.inequality_columns,''),', ','_'),'[',''),']','')
+	+ ']'
+	+ ' ON ' + details.statement
+	+ ' (' + ISNULL (details.equality_columns,'')
+	+ CASE WHEN details.equality_columns IS NOT NULL AND details.inequality_columns 
+	IS NOT NULL THEN ',' ELSE
+	'' END
+	+ ISNULL (details.inequality_columns, '')
+	+ ')'
+	+ ISNULL (' INCLUDE (' + details.included_columns + ')', '')
+FROM sys.dm_db_missing_index_groups AS dm_mig WITH(NOLOCK)
+	INNER JOIN sys.dm_db_missing_index_group_stats AS dm_migs WITH(NOLOCK)
+	ON dm_migs.group_handle = dm_mig.index_group_handle
+	INNER JOIN sys.dm_db_missing_index_details AS details WITH(NOLOCK)
+	ON dm_mig.index_handle = details.index_handle
+	INNER JOIN sys.tables AS tb WITH(NOLOCK)
+	ON details.object_id = tb.object_id
+WHERE details.database_ID = DB_ID()
+ORDER BY Avg_Estimated_Impact DESC
+
+//重新建立索引
+	ALTER INDEX _dta_index_FEM_REPAIR_FORM_7_645577338__K3_K2_K8_K9_4_5_6_10_19 ON FEM_REPAIR_FORM REBUILD;
+
+//查詢索引使用情況
+		SELECT TOP 1000
+o.name AS 表名
+, i.name AS 索引名
+, i.index_id AS 索引id
+, dm_ius.user_seeks AS 搜索次数
+, dm_ius.user_scans AS 扫描次数
+, dm_ius.user_lookups AS 查找次数
+, dm_ius.user_updates AS 更新次数
+, p.TableRows as 表行数
+, 'DROP INDEX ' + QUOTENAME(i.name)
++ ' ON ' + QUOTENAME(s.name) + '.' + QUOTENAME(OBJECT_NAME(dm_ius.OBJECT_ID)) AS '删除语句'
+FROM sys.dm_db_index_usage_stats dm_ius
+INNER JOIN sys.indexes i ON i.index_id = dm_ius.index_id AND dm_ius.OBJECT_ID = i.OBJECT_ID
+INNER JOIN sys.objects o ON dm_ius.OBJECT_ID = o.OBJECT_ID
+INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+INNER JOIN (SELECT SUM(p.rows) TableRows, p.index_id, p.OBJECT_ID
+FROM sys.partitions p GROUP BY p.index_id, p.OBJECT_ID) p
+ON p.index_id = dm_ius.index_id AND dm_ius.OBJECT_ID = p.OBJECT_ID
+WHERE OBJECTPROPERTY(dm_ius.OBJECT_ID,'IsUserTable') = 1
+AND dm_ius.database_id = DB_ID()
+AND i.type_desc = 'nonclustered'
+AND i.is_primary_key = 0
+AND i.is_unique_constraint = 0
+and o.name='FEM_REPAIR_FORM'   --根据实际修改表名
+ORDER BY (dm_ius.user_seeks + dm_ius.user_scans + dm_ius.user_lookups) ASC
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+備份
+
+USE [msdb]
+GO
+
+/****** Object:  Job [FEM_EquipmentMaintenance]    Script Date: 06/21/2018 14:11:56 ******/
+BEGIN TRANSACTION
+DECLARE @ReturnCode INT
+SELECT @ReturnCode = 0
+/****** Object:  JobCategory [[Uncategorized (Local)]]]    Script Date: 06/21/2018 14:11:56 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'[Uncategorized (Local)]' AND category_class=1)
+BEGIN
+EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'[Uncategorized (Local)]'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'FEM_EquipmentMaintenance', 
+		@enabled=1, 
+		@notify_level_eventlog=0, 
+		@notify_level_email=0, 
+		@notify_level_netsend=0, 
+		@notify_level_page=0, 
+		@delete_level=0, 
+		@description=N'shujukubackup', 
+		@category_name=N'[Uncategorized (Local)]', 
+		@owner_login_name=N'sa', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [FEM_EquipmentMaintenance]    Script Date: 06/21/2018 14:11:56 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'FEM_EquipmentMaintenance', 
+		@step_id=1, 
+		@cmdexec_success_code=0, 
+		@on_success_action=1, 
+		@on_success_step_id=0, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @filename VARCHAR(255)
+DECLARE @date DATETIME
+SELECT @date=GETDATE()
+SELECT @filename = ''D:\BACKUP\FEM_EquipmentMaintenance-''+CAST(DATEPART(yyyy,@date) as varchar)+''-''+CAST(DATEPART(mm,@date) as varchar)+''-''+CAST(DATEPART(dd,@date) as varchar)+''.bak''
+BACKUP DATABASE [FEM_EquipmentMaintenance] TO  DISK = @filename WITH INIT
+
+DECLARE @OLDDATE DATETIME
+SELECT @OLDDATE=GETDATE()-5
+EXECUTE master.dbo.xp_delete_file 0,N''D:\BACKUP'',N''bak'',@olddate,1
+GO', 
+		@database_name=N'FEM_EquipmentMaintenance', 
+		@flags=0
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'FEM_EquipmentMaintenance', 
+		@enabled=1, 
+		@freq_type=4, 
+		@freq_interval=1, 
+		@freq_subday_type=1, 
+		@freq_subday_interval=0, 
+		@freq_relative_interval=0, 
+		@freq_recurrence_factor=0, 
+		@active_start_date=20170320, 
+		@active_end_date=99991231, 
+		@active_start_time=20000, 
+		@active_end_time=235959, 
+		@schedule_uid=N'64562461-e6d8-4a84-a03a-20bcd51e1ede'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+
+//查看數據庫的歷史變化
+SELECT
+[database_name] AS "Database",
+DATEPART(month,[backup_start_date]) AS "Month",
+AVG([backup_size]/1024/1024) AS "Backup Size MB"
+FROM msdb.dbo.backupset
+WHERE
+ [database_name] = N'RFIDCHK'
+AND [type] = 'D'
+  and [backup_start_date]>'2018-01-01'
+GROUP BY [database_name],DATEPART(month,[backup_start_date])
+order by month
+
+
+
+
+
+

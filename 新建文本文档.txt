@@ -1,0 +1,132 @@
+EntitiesModel dbContext = new EntitiesModel();
+            var mUser = HttpContext.Current.Session["UserHashKey"].ToString().Substring(0, 36);
+            string message = "";
+
+             string signFilePath=null;
+            foreach (var v in Result)
+            {
+                var SampleId = v.SampleId;
+
+                var exists = dbContext.ZS_Samp_SampleAnalyzeMethods.Any(x => x.SampleId == new Guid(SampleId) && (x.Status == null || x.Status == "0" || x.Status == "1")); //判断是否存在检验项目还没有处理的
+                if (exists)
+                {
+                    message += "样品编号为：" + v.SampleCode + ",还存在未处理的数据";
+                    break;
+                }else 
+                {
+
+                    var signFile = (from x in dbContext.Sys_Attachments join x1 in dbContext.Sys_ObjectAttachments on x.Id equals x1.AttachmentId where x1.ObjectId==new Guid(mUser) select x.Path ).FirstOrDefault();
+                    
+                    if (signFile == null)
+                    {
+                        message = "该人员未上传电子签名！";
+                        break;
+                    }
+
+                    signFilePath = HttpContext.Current.Server.MapPath("~" + signFile);
+                    if (!File.Exists(signFilePath))
+                    {
+                        message = "电子签名文件不存在！";
+                        break;
+                    }
+
+               
+
+
+                    var vSampleAnalyzeMethodList = dbContext.ZS_Samp_SampleAnalyzeMethods.Where(t => t.SampleId == new Guid(SampleId)).ToList();
+                    foreach (var item in vSampleAnalyzeMethodList)
+                    {
+                        item.Status = "3";
+
+                        if (!string.IsNullOrEmpty(v.AuditorPerson))
+                        {
+                            item.AuditorPerson = new Guid(v.AuditorPerson);
+                        }
+                        item.ModifyTime = DateTime.Now.ToLocalTime();
+                        item.ModifyUser = new Guid(mUser);
+                    }
+
+                    //该样品全部分析项目均做完 结果录入&&数据校对&&数据审核提交 后再更新样品表 样品状态
+                    var vCount = dbContext.ZS_Samp_SampleAnalyzeMethods.Where(t => t.SampleId == new Guid(SampleId) && (t.Status == null || t.Status == "0" || t.Status == "1")).Count();
+
+                    if (vCount == 0)
+                    {
+                        var vSample = dbContext.ZS_Samp_Samples.Where(t => t.Id == new Guid(SampleId)).FirstOrDefault();
+
+                        //提交状态
+                        vSample.Status = 7;
+                        vSample.ModifyTime = DateTime.Now.ToLocalTime();
+                        vSample.ModifyUser = new Guid(mUser);
+
+                        if (!string.IsNullOrEmpty(v.AuditorPerson))
+                        {
+                            vSample.AuditorPerson = new Guid(v.AuditorPerson); //样品的审核人员
+                        }
+                    }
+
+
+                }
+
+                var attachments = dbContext.Sys_Attachments.Where(x => x.Id ==new Guid(SampleId)).FirstOrDefault();
+                string fullFilePath = HttpContext.Current.Server.MapPath("~" + attachments.Path);
+                Document document = new Document(fullFilePath);
+
+                var rowIndex = 0;
+
+
+                foreach (DocumentObject docObj in document.Sections[0].ChildObjects)
+                {
+                    //获取段落中的图片
+                    if (docObj.DocumentObjectType == DocumentObjectType.Body)
+                    {
+                        var data = docObj.ChildObjects.FirstItem as Spire.Doc.Table;
+                        foreach (TableRow row in data.Rows)
+                        {
+                            var cellIndex = 0;
+                            foreach (TableCell cell in row.Cells)
+                            {
+                                foreach (Spire.Doc.Documents.Paragraph paragraph in cell.Paragraphs)
+                                {
+                                    if (rowIndex == 51 && cellIndex == 8)
+                                    {
+
+                                        System.Drawing.Image image = System.Drawing.Image.FromFile(signFilePath);
+                                        var s = resizeImage(image, new Size(100, 50));
+                                        DocPicture picture = paragraph.AppendPicture(s);
+                                    }
+                                    cellIndex++;
+                                }
+                                rowIndex++;
+                            }
+                        }
+                    }
+                }
+
+                var fileId = Guid.NewGuid();
+                var filePath = string.Format("/File/ExamineResultReport/{0}.docx", fileId.ToString());
+                string destinationFilePath = HttpContext.Current.Server.MapPath("~" + filePath);
+                document.SaveToFile(destinationFilePath);
+
+
+                if (attachments != null)
+                {
+                    attachments.OriginalName = string.Format("{0}.docx", fileId);
+                    attachments.PhysicalName = string.Format("{0}.docx", fileId);
+                    attachments.Path = filePath;
+                    attachments.ModifyTime = DateTime.Now;
+                    attachments.ModifyUser = new Guid(mUser);
+                }
+
+
+
+                message = "提交成功";
+
+
+
+
+            }
+
+            dbContext.SaveChanges();
+
+
+SP_General_{0}.jpg", id.ToString()
