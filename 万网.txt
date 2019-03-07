@@ -1,0 +1,39 @@
+主机管理控制台用户名： bxw2442370292
+
+FTP登录用户名： bxw2442370292
+FTP登录主机地址： bxw2442370292.my3w.com
+密码：Zhang19920303!@
+
+
+数据库名称： bds270400442_db    
+数据库类型： SqlServer
+数据库连接地址： bds270400442.my3w.com
+数据库用户名： bds270400442
+
+ftp://bxw2442370292.my3w.com
+
+zhang19920303163x
+
+
+wx4ddf85c4058eca6c
+252c875065c4af553502e014ca605d62
+
+
+
+  "ojTFDv2eGvq1OuDwSPl3ccfBzb30",
+  "ojTFDv0buE4FQCUgbwdD0_aB8drg",
+   "ojTFDv8xQytDdYd7AYm8svNC-tqk"
+
+appID：wx0baeadef19ff41c3
+appsecret：eb86166b0212d82b68e73212b0210253
+
+
+
+
+
+13_ZEIBb1X-63PkObXGdb2Iq1YviqmnP-8ekF48LKKRKj6j7xGXPQz894XuPlEzd7k68YwxgXn72cmokSxQUmyjDC8wr2hjT8Di1jzzijSbXORXSLsFsaLnAPjmp_IHxUGnr7M-CjPCdq0-vU7xHUWbACAANP
+
+
+
+
+oqvZp1Nh8O94UWBynGdOY9SGkNKY
