@@ -1,3 +1,6 @@
+var name="zhangsan "
+
+
 EntitiesModel dbContext = new EntitiesModel();
             var mUser = HttpContext.Current.Session["UserHashKey"].ToString().Substring(0, 36);
             string message = "";
